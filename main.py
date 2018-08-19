@@ -29,7 +29,7 @@ def check_twice(grabber):
         return wrapper(tid)
     return wrapper
 @check_twice
-def yamibo_new_grabber(nid):
+def yamibo_new(nid):
     se = HTMLSession()
     site = 'https://www.yamibo.com'
     page = se.get(site + '/novel/%d' % nid).html
@@ -111,8 +111,6 @@ def tieba(tid):
             date = date[date.find('楼') + 1:]
         except:
             date = ''
-        if '转转游戏交易' in author:
-            continue
         if lz is None:
             lz = author
         s = text + '\n'
@@ -164,9 +162,6 @@ def process_text(s):
     for r in t:
         if r == '\n' or ('本帖最后由' in r and '编辑' in r):
             continue
-        '''if '发表于' in r:
-            lines.append('\n' + r)
-        else:'''
         lines.append(r)
     t = [r for r in lines]
     lines = []
@@ -190,58 +185,7 @@ def generate(ret, split_mode='none', add_title=False, char_title='第 %d 章', o
     s = ''
     if add_title:
         s = '## %s\n' % title
-    if split_mode == 'auto_swap':
-        ccnt = 0
-        for txt in txts:
-            os.system('clear')
-            t = process_text(txt)
-            poses = [i for i in range(len(t)) if t[i] == '\n']
-            if len(poses) >= 30:
-                t = t[:poses[29]] + '\n.....'
-            print(t)
-            if input('\nIs is a new char? (y) ').lower() != 'n':
-                if input('Is this char ' + char_title % (ccnt + 1) + ' ? (y) ').lower() == 'n':
-                    t = input('Enter the char title: ')
-                    if input('Should the char count += 1? (n) ').lower() == 'y':
-                        ccnt += 1
-                else:
-                    ccnt += 1
-                    t = char_title % ccnt
-                lines = split_lines(txt)
-                for i in range(len(lines)):
-                    if t in lines[i]:
-                        r = lines[i]
-                        if i > 0:
-                            lines[i] = '_______________\n'
-                        else:
-                            lines[i] = '\n'
-                        s += '\n### ' + r + '\n\n'
-                        break
-                else:
-                    s += '\n### ' + t + '\n\n'
-                s += ''.join(lines)
-            else:
-                s += txt
-    elif split_mode == 'auto':
-        ccnt = 0
-        for txt in txts:
-            os.system('clear')
-            t = process_text(txt)
-            poses = [i for i in range(len(t)) if t[i] == '\n']
-            if len(poses) >= 30:
-                t = t[:poses[29]] + '\n.....'
-            print(t)
-            if input('\nIs is not a new char? (y) ').lower() != 'n':
-                if input('Is this char ' + char_title % (ccnt + 1) + ' ? (y) ').lower() == 'n':
-                    t = input('Enter the char title: ')
-                    if input('Should the char count += 1? (n) ').lower() == 'y':
-                        ccnt += 1
-                else:
-                    ccnt += 1
-                    t = char_title % ccnt
-                s += '\n### ' + t + '\n\n'
-            s += txt
-    elif split_mode == 'none':
+    if split_mode == 'none':
         s += '\n'.join(txts) + '\n'
     elif split_mode == 'symbol':
         s += '\n$$$$$$$$$$$$\n\n'.join(txts) + '\n'
@@ -257,7 +201,7 @@ def generate(ret, split_mode='none', add_title=False, char_title='第 %d 章', o
         output_url = output_url.replace(x, ' ')
     if open_mode == 'w':
         while os.path.exists(output_url):
-            if input('%s exists. Override? (n) ' % output_url).lower() == 'y':
+            if input('%s exists. Overwrite? (n) ' % output_url).lower() == 'y':
                 break
             output_url = input('New output url: ')
     with open(output_url, open_mode) as f:
@@ -268,46 +212,11 @@ def generate_combine(rets, output_url):
         generate(x, add_title=True, output_url=output_url, open_mode='a')
 
 if __name__ == '__main__':
-    '''
-            yamibo(472134),
-            yamibo(141873),
-            yamibo(221809),
-            yamibo(132651),
-            yamibo(89713),
-            tieba(2250914241),
-            tieba(1790007788),
-            tieba(1907240934),
-            tieba(2193211035),
-            tieba(1808975280),
-            tieba(1246165242),
-            tieba(1253331694)
-    '''
-    '''
+    ''''
     generate_combine([
         tieba(2178441316),
-        tieba(2137778408),
-        yamibo(255167),
-        yamibo(250506),
-        yamibo(220980),
-        yamibo(209013),
-        yamibo(201675),
-        yamibo(189457),
-        yamibo(200444),
-        yamibo(139509),
-        yamibo(121663),
-        yamibo(114341),
-        yamibo(102926),
-        yamibo(97601),
-        yamibo(252026),
-        yamibo(251143),
-        yamibo(251966),
-        yamibo(248722),
-        yamibo(132519),
-        yamibo(194587),
-        yamibo(124416),
         yamibo(104392),
-        yamibo(95709),
-        yamibo(90635)
-            ], 'yukarei.txt')
-    generate(yamibo(243528), 'symbol')
+            ], 'test.txt')
+    generate(yamibo(206626), 'symbol')
     '''
+
