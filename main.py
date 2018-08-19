@@ -211,12 +211,12 @@ def generate_combine(rets, output_url):
     for x in rets:
         generate(x, add_title=True, output_url=output_url, open_mode='a')
 
+''''
 if __name__ == '__main__':
-    ''''
     generate_combine([
         tieba(2178441316),
         yamibo(104392),
             ], 'test.txt')
     generate(yamibo(206626), 'symbol')
-    '''
+'''
 
