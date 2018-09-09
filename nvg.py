@@ -1,14 +1,86 @@
-#!/usr/bin/python
-from requests_html import HTMLSession, HTML
-import requests
-import zhconv
 import os
 import json
+import zhconv
+import requests
+from requests_html import HTMLSession, HTML
 
 def fix_nl(s):
-    if not s:
-        return '\n'
-    return (s + '\n') if s[-1] != '\n' else s
+    return s if s.endswith('\n') else (s + '\n')
+def split_lines(s):
+    s = fix_nl(s)
+    lines = []
+    t = []
+    for c in s:
+        t.append(c)
+        if c == '\n':
+            lines.append(''.join(t))
+            t.clear()
+    return lines
+def process_text(s):
+    s = zhconv.convert(fix_nl(s), 'zh-cn')
+    lines = []
+    t = split_lines(s)
+    for r in t:
+        if r == '\n' or ('本帖最后由' in r and '编辑' in r):
+            continue
+        lines.append(r)
+    t = [r for r in lines]
+    lines = []
+    ncnt = 0
+    for line in t:
+        if line == '\n':
+            ncnt += 1
+        else:
+            lines.append(line)
+            if ncnt > 1:
+                lines.append('\n')
+            ncnt = 0
+    if ncnt > 1:
+        lines.append('\n')
+    # ncnt = 0
+    return fix_nl(''.join(lines))
+def optimize_url(url):
+    url = url.replace('*', '')
+    for x in ('/', '?', ':', '|', '\\', '<', '>'):
+        url = url.replace(x, ' ')
+    return url.strip()
+def check_refused_overwrite(url):
+    return os.path.exists(output_url) and input('%s exists. Overwrite? (n) ' % url).lower() != 'y'
+def generate(ret, split_mode='none', add_title=False, char_title='第 %d 章', output_url=None, open_mode='w', if_optimize_url=True):
+    txts, title = ret
+    print("Generating %s.." % title)
+    txts = [fix_nl(s) for s in txts]
+    s = ''
+    if add_title:
+        s = '## %s\n' % title
+    if split_mode == 'none':
+        s += '\n'.join(txts) + '\n'
+    elif split_mode == 'spliter':
+        s += '\n$$$$$$$$$$$$\n\n'.join(txts) + '\n'
+    elif split_mode == 'first_line':
+        s += '\n'.join(['### ' + txt for txt in txts]) + '\n'
+    elif split_mode == 'number':
+        for i in range(len(txts)):
+            s += '### %d.\n' % (i + 1) + txts[i] + '\n'
+    else:
+        raise ValueError('Invalid split mode')
+    
+    if output_url is None:
+        output_url = '%s.txt' % title
+    if if_optimize_url:
+        output_url = optimize_url(output_url)
+    if open_mode.startswith('w') and check_refused_overwrite(output_url):
+        print('Aborting.')
+        return
+    with open(output_url, open_mode, encoding='utf-8') as f:
+        f.write(process_text(s))
+def generate_collection(rets, output_url, split_mode):
+    output_url = optimize_url(output_url)
+    if open_mode.startswith('w') and check_refused_overwrite(output_url):
+        print('Aborting.')
+        return
+    for x in rets:
+        generate(x, split_mode=split_mode, add_title=True, output_url=output_url, open_mode='a', if_optimize_url=False)
 def read_cookies(fn):
     ret = dict()
     with open(fn, 'r') as fp:
@@ -20,15 +92,15 @@ def html_getter(cks):
     return lambda url: se.get(url, cookies=cks).html
 def html_getter_2(cks):
     return lambda url: HTML(html=requests.get(url, cookies=cks).text)
-def check_twice(grabber):
-    def wrapper(tid):
-        a = grabber(tid)
-        b = grabber(tid)
+def verified_return(func):
+    def wrapper(**kwargs):
+        a = func(**kwargs)
+        b = func(**kwargs)
         if a == b:
             return a
-        return wrapper(tid)
+        return wrapper(**kwargs)
     return wrapper
-@check_twice
+
 def yamibo_new(nid):
     se = HTMLSession()
     site = 'https://www.yamibo.com'
@@ -36,7 +108,7 @@ def yamibo_new(nid):
     title = page.find('h3.col-md-12')[0].text
     txts = [se.get(site + c.find('a[href]')[0].attrs['href']).html.find('#txt')[0].find('.panel-body')[0].text for c in page.find('div[data-key]')]
     return txts, title
-@check_twice
+
 def yamibo(tid):
     get = html_getter_2(read_cookies('yamibo-cookies.json'))
     html = get('https://bbs.yamibo.com/thread-%s-1-1.html' % tid)
@@ -89,7 +161,7 @@ def yamibo(tid):
             flag = True
     return txts, title
     # return posts
-@check_twice
+
 def tieba(tid):
     get = html_getter(read_cookies('tieba-cookies.json'))
     html = get('https://tieba.baidu.com/p/%s' % tid)
@@ -145,78 +217,3 @@ def tieba(tid):
             flag = True
     return txts, title
     # return posts
-def split_lines(s):
-    s = fix_nl(s)
-    lines = []
-    t = []
-    for c in s:
-        t.append(c)
-        if c == '\n':
-            lines.append(''.join(t))
-            t.clear()
-    return lines
-def process_text(s):
-    s = zhconv.convert(fix_nl(s), 'zh-cn')
-    lines = []
-    t = split_lines(s)
-    for r in t:
-        if r == '\n' or ('本帖最后由' in r and '编辑' in r):
-            continue
-        lines.append(r)
-    t = [r for r in lines]
-    lines = []
-    ncnt = 0
-    for line in t:
-        if line == '\n':
-            ncnt += 1
-        else:
-            lines.append(line)
-            if ncnt > 1:
-                lines.append('\n')
-            ncnt = 0
-    if ncnt > 1:
-        lines.append('\n')
-    # ncnt = 0
-    return fix_nl(''.join(lines))
-def generate(ret, split_mode='none', add_title=False, char_title='第 %d 章', output_url=None, open_mode='w'):
-    txts, title = ret
-    print("Generating %s.." % title)
-    txts = [fix_nl(s) for s in txts]
-    s = ''
-    if add_title:
-        s = '## %s\n' % title
-    if split_mode == 'none':
-        s += '\n'.join(txts) + '\n'
-    elif split_mode == 'symbol':
-        s += '\n$$$$$$$$$$$$\n\n'.join(txts) + '\n'
-    elif split_mode == 'first_line':
-        s += '\n'.join(['### ' + txt for txt in txts]) + '\n'
-    else:
-        raise ValueError
-    
-    if output_url is None:
-        output_url = '%s.txt' % title
-    output_url = output_url.replace('*', '')
-    for x in ('/', '?', ':', '|', '\\', '<', '>'):
-        output_url = output_url.replace(x, ' ')
-    if open_mode == 'w':
-        while os.path.exists(output_url):
-            if input('%s exists. Overwrite? (n) ' % output_url).lower() == 'y':
-                break
-            output_url = input('New output url: ')
-    with open(output_url, open_mode) as f:
-        f.write(process_text(s))
-
-def generate_combine(rets, output_url):
-    for x in rets:
-        generate(x, add_title=True, output_url=output_url, open_mode='a')
-
-''''
-if __name__ == '__main__':
-    generate_combine([
-        tieba(2178441316),
-        yamibo(104392),
-            ], 'test.txt')
-    generate(yamibo(206626), 'symbol')
-'''
-
