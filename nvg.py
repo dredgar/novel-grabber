@@ -45,8 +45,12 @@ def optimize_url(url):
         url = url.replace(x, ' ')
     return url.strip()
 def check_refused_overwrite(url):
-    return os.path.exists(output_url) and input('%s exists. Overwrite? (n) ' % url).lower() != 'y'
-def generate(ret, split_mode='none', add_title=False, char_title='第 %d 章', output_url=None, open_mode='w', if_optimize_url=True):
+    return os.path.exists(url) and input('%s exists. Overwrite? (n) ' % url).lower() != 'y'
+def generate(ret=None, split_mode='none', add_title=False, char_title='第 %d 章', output_url=None, open_mode='w', if_optimize_url=True):
+    if ret is None:
+        ret = json.load(open('ret.json', 'r', encoding='utf-8'))
+    else:
+        json.dump(ret, open('ret.json', 'w', encoding='utf-8'))
     txts, title = ret
     print("Generating %s.." % title)
     txts = [fix_nl(s) for s in txts]
@@ -81,11 +85,10 @@ def generate_collection(rets, output_url, split_mode):
         return
     for x in rets:
         generate(x, split_mode=split_mode, add_title=True, output_url=output_url, open_mode='a', if_optimize_url=False)
-def read_cookies(fn):
+def read_cookies(url):
     ret = dict()
-    with open(fn, 'r') as fp:
-        for x in json.load(fp):
-            ret[x['name']] = x['value']
+    for x in json.load(open(url, 'r', encoding='utf-8')):
+        ret[x['name']] = x['value']
     return ret
 def html_getter(cks):
     se = HTMLSession()
