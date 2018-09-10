@@ -1,2 +1,2 @@
-# novel-grabber
-Grab novels on tieba and yamibo.
+# nvg
+Grab novels at tieba and yamibo.
