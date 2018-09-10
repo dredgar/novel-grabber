@@ -1,3 +1,5 @@
 from nvg import *
 
-generate(yamibo('206626'), 'spliter')
+generate_collection([
+    
+    ], 'a.txt')

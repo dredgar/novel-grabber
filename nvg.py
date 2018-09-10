@@ -43,7 +43,7 @@ def optimize_url(url):
     url = url.replace('*', '')
     for x in ('/', '?', ':', '|', '\\', '<', '>'):
         url = url.replace(x, ' ')
-    return url.strip()
+    return ' '.join(url.split())
 def check_refused_overwrite(url):
     return os.path.exists(url) and input('%s exists. Overwrite? (n) ' % url).lower() != 'y'
 def generate(ret=None, split_mode='none', add_title=False, char_title='第 %d 章', output_url=None, open_mode='w', if_optimize_url=True):
@@ -80,9 +80,11 @@ def generate(ret=None, split_mode='none', add_title=False, char_title='第 %d �
         f.write(process_text(s))
 def generate_collection(rets, output_url, split_mode):
     output_url = optimize_url(output_url)
-    if open_mode.startswith('w') and check_refused_overwrite(output_url):
+    if check_refused_overwrite(output_url):
         print('Aborting.')
         return
+    if os.path.exists(output_url):
+        os.remove(output_url)
     for x in rets:
         generate(x, split_mode=split_mode, add_title=True, output_url=output_url, open_mode='a', if_optimize_url=False)
 def read_cookies(url):
