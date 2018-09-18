@@ -5,6 +5,9 @@ import requests
 from requests_html import HTMLSession, HTML
 
 def fix_nl(s):
+    '''
+    If s ends with \\n, return itself, or return it with an appending \\n.
+    '''
     return s if s.endswith('\n') else (s + '\n')
 def split_lines(s):
     s = fix_nl(s)
@@ -40,23 +43,28 @@ def process_text(s):
     # ncnt = 0
     return fix_nl(''.join(lines))
 def optimize_url(url):
+    '''
+    Convert a url to make it supported by Windows filesystem.
+    '''
     url = url.replace('*', '')
     for x in ('/', '?', ':', '|', '\\', '<', '>'):
         url = url.replace(x, ' ')
     return ' '.join(url.split())
 def check_refused_overwrite(url):
     return os.path.exists(url) and input('%s exists. Overwrite? (n) ' % url).lower() != 'y'
-def generate(ret=None, split_mode='none', add_title=False, char_title='第 %d 章', output_url=None, open_mode='w', if_optimize_url=True):
-    if ret is None:
+
+def generate(src, split_mode='none', output_url=None, open_mode='w', if_optimize_url=True, if_attach_title=False, if_attach_source=False):
+    ''' if src is None:
         ret = json.load(open('ret.json', 'r', encoding='utf-8'))
     else:
-        json.dump(ret, open('ret.json', 'w', encoding='utf-8'))
-    txts, title = ret
-    print("Generating %s.." % title)
-    txts = [fix_nl(s) for s in txts]
+        json.dump(ret, open('ret.json', 'w', encoding='utf-8')) '''
+    print("Generating %s.." % src.title)
+    txts = [fix_nl(s) for s in src.txts]
     s = ''
-    if add_title:
-        s = '## %s\n' % title
+    if if_attach_title:
+        s = '## %s\n' % src.title
+    if if_attach_source:
+        s += 'From %s #%s\n' % (src.site, src.tid)
     if split_mode == 'none':
         s += '\n'.join(txts) + '\n'
     elif split_mode == 'spliter':
@@ -70,7 +78,7 @@ def generate(ret=None, split_mode='none', add_title=False, char_title='第 %d �
         raise ValueError('Invalid split mode')
     
     if output_url is None:
-        output_url = '%s.txt' % title
+        output_url = '%s.txt' % src.title
     if if_optimize_url:
         output_url = optimize_url(output_url)
     if open_mode.startswith('w') and check_refused_overwrite(output_url):
@@ -78,16 +86,21 @@ def generate(ret=None, split_mode='none', add_title=False, char_title='第 %d �
         return
     with open(output_url, open_mode, encoding='utf-8') as f:
         f.write(process_text(s))
-def generate_collection(rets, output_url, split_mode):
+def generate_collection(srcs, output_url, split_mode, if_attach_source=True):
     output_url = optimize_url(output_url)
     if check_refused_overwrite(output_url):
         print('Aborting.')
         return
     if os.path.exists(output_url):
         os.remove(output_url)
-    for x in rets:
-        generate(x, split_mode=split_mode, add_title=True, output_url=output_url, open_mode='a', if_optimize_url=False)
+    for x in srcs:
+        generate(x, split_mode=split_mode, output_url=output_url, open_mode='a', if_optimize_url=False, if_attach_title=True, if_attach_source=if_attach_source)
+
 def read_cookies(url):
+    '''
+    Read cookies formatted for requests module from a file that EditThisCookie extension exports to.
+    :param url: Path to the file EditThisCookie exported to.
+    '''
     ret = dict()
     for x in json.load(open(url, 'r', encoding='utf-8')):
         ret[x['name']] = x['value']
@@ -106,119 +119,134 @@ def verified_return(func):
         return wrapper(**kwargs)
     return wrapper
 
-def yamibo_new(nid):
-    se = HTMLSession()
-    site = 'https://www.yamibo.com'
-    page = se.get(site + '/novel/%d' % nid).html
-    title = page.find('h3.col-md-12')[0].text
-    txts = [se.get(site + c.find('a[href]')[0].attrs['href']).html.find('#txt')[0].find('.panel-body')[0].text for c in page.find('div[data-key]')]
-    return txts, title
+class BaseContent(object):
+    '''
+    Base novel content class.
+    '''
+    def __init__(self, tid, title, txts):
+        self.tid = tid
+        self.title = title
+        self.txts = txts
+        self.site = None
 
-def yamibo(tid):
-    get = html_getter_2(read_cookies('yamibo-cookies.json'))
-    html = get('https://bbs.yamibo.com/thread-%s-1-1.html' % tid)
-    title = html.find('h1.ts', first=True).text
-    print('Yamibo, %s, %s' % (title, tid))
-    try:
-        pcnt = int(html.find('div.pg > label > span[title]', first=True).attrs['title'][1:-1])
-    except:
-        pcnt = 1
-    posts = list(filter(lambda x: x.attrs['id'][5:].isnumeric(), html.find('#postlist', first=True).find('div[id^=post]')))
-    for i in range(2, pcnt + 1):
-        posts += list(filter(lambda x: x.attrs['id'][5:].isnumeric(), get('https://bbs.yamibo.com/thread-%s-%d-1.html' % (tid, i)).find('#postlist', first=True).find('div[id^=post]')))
-    txts = []
-    lz = None
-    flag = True
-    for p in posts:
-        div = p.find('.authi')
-        author = div[0].text
-        date = div[1].find('em', first=True).text
-        date = date[date.find(' ') + 1:]
-        div = p.find('.t_fsz', first=True)
-        text = div.text
-        for x in div.find('.quote'):
-            t = ''
-            for line in split_lines(x.text):
-                if line.strip():
-                    t += '> ' + line
-            text = text.replace(x.text, t)
-        if lz is None:
-            lz = author
-        s = text + '\n'
-        try:
-            rat = p.find('.ratl', first=True).find('tr')
-            del rat[0]
-            for x in rat:
-                l = [y.text for y in x.find('td')]
-                if l[2].strip():
-                    s += l[2] + '    (%s  %s)\n' % (l[0], l[1])
-        except:
-            pass
-        s += author + ' ' + date + '\n'
-        if lz == author:
-            if flag:
-                txts.append(s)
-                flag = False
-            else:
-                txts[-1] += s
-        else:
-            txts[-1] += s
-            flag = True
-    return txts, title
-    # return posts
+class YamiboNew(BaseContent):
+    def __init__(self, nid):
+        self.site = 'Yamibo New'
+        self.tid = str(nid)
+        se = HTMLSession()
+        site = 'https://www.yamibo.com'
+        page = se.get(site + '/novel/%s' % self.tid).html
+        self.title = page.find('h3.col-md-12')[0].text
+        self.txts = [se.get(site + c.find('a[href]')[0].attrs['href']).html.find('#txt')[0].find('.panel-body')[0].text for c in page.find('div[data-key]')]
 
-def tieba(tid):
-    get = html_getter(read_cookies('tieba-cookies.json'))
-    html = get('https://tieba.baidu.com/p/%s' % tid)
-    title = html.find('.core_title_txt', first=True).attrs['title']
-    print('Tieba, %s, %s' % (title, tid))
-    pcnt = html.find('.l_reply_num', first=True).text
-    pcnt = int(pcnt[pcnt.find('共') + 1:-1])
-    posts = html.find('#j_p_postlist', first=True).find('.l_post')
-    for i in range(2, pcnt + 1):
-        posts += get('https://tieba.baidu.com/p/%s?pn=%d' % (tid, i)).find('#j_p_postlist', first=True).find('.l_post')
-    txts = []
-    lz = None
-    flag = True
-    for p in posts:
-        author = p.find('.d_name', first=True).text
-        text = p.find('.p_content', first=True).text
+class Yamibo(BaseContent):
+    def __init__(self, tid):
+        self.site = 'Yamibo Forum'
+        self.tid = str(tid)
+        get = html_getter_2(read_cookies('yamibo-cookies.json'))
+        html = get('https://bbs.yamibo.com/thread-%s-1-1.html' % self.tid)
+        self.title = html.find('h1.ts', first=True).text
+        print('Yamibo, %s, %s' % (self.title, self.tid))
         try:
-            date = p.find('.post-tail-wrap', first=True).text
-            date = date[date.find('楼') + 1:]
+            pcnt = int(html.find('div.pg > label > span[title]', first=True).attrs['title'][1:-1])
         except:
-            date = ''
-        if lz is None:
-            lz = author
-        s = text + '\n'
-        # grabbing lzl
-        try:
-            pid = p.find('.d_post_content', first=True).attrs['id']
-        except:
-            continue
-        pid = pid[pid.rfind('_') + 1:]
-        pn = 1
-        while True:
-            l = get('https://tieba.baidu.com/p/comment?tid=%s&pid=%s&pn=%d' % (tid, pid, pn)).find('.lzl_cnt')
-            if not l:
-                break
-            pn += 1
-            for x in l:
-                s += x.find('.lzl_content_main', first=True).text + '    (%s  %s)\n' % (
-                    x.find('[username]', first=True).attrs['username'],
-                    x.find('.lzl_time', first=True).text )
-        s += author
-        if date:
-            s += ' ' + date
-        s += '\n'
-        if lz == author:
-            if flag:
-                txts.append(s)
-                flag = False
+            pcnt = 1
+        posts = list(filter(lambda x: x.attrs['id'][5:].isnumeric(), html.find('#postlist', first=True).find('div[id^=post]')))
+        for i in range(2, pcnt + 1):
+            posts += list(filter(lambda x: x.attrs['id'][5:].isnumeric(), get('https://bbs.yamibo.com/thread-%s-%d-1.html' % (self.tid, i)).find('#postlist', first=True).find('div[id^=post]')))
+            print('Page', i)
+        self.txts = []
+        lz = None
+        flag = True
+        for p in posts:
+            div = p.find('.authi')
+            author = div[0].text
+            date = div[1].find('em', first=True).text
+            date = date[date.find(' ') + 1:]
+            div = p.find('.t_fsz', first=True)
+            text = div.text
+            for x in div.find('.quote'):
+                t = ''
+                for line in split_lines(x.text):
+                    if line.strip():
+                        t += '> ' + line
+                text = text.replace(x.text, t)
+            if lz is None:
+                lz = author
+            s = text + '\n'
+            try:
+                rat = p.find('.ratl', first=True).find('tr')
+                del rat[0]
+                for x in rat:
+                    l = [y.text for y in x.find('td')]
+                    if l[2].strip():
+                        s += l[2] + '    (%s  %s)\n' % (l[0], l[1])
+            except:
+                pass
+            s += author + ' ' + date + '\n'
+            if lz == author:
+                if flag:
+                    self.txts.append(s)
+                    flag = False
+                else:
+                    self.txts[-1] += s
             else:
-                txts[-1] += s
-        else:
-            txts[-1] += s
-            flag = True
-    return txts, title
-    # return posts
+                self.txts[-1] += s
+                flag = True
+
+class Tieba(BaseContent):
+    def __init__(self, tid):
+        self.site = 'Tieba'
+        self.tid = str(tid)
+        get = html_getter(read_cookies('tieba-cookies.json'))
+        html = get('https://tieba.baidu.com/p/%s' % self.tid)
+        self.title = html.find('.core_title_txt', first=True).attrs['title']
+        print('Tieba, %s, %s' % (self.title, self.tid))
+        pcnt = html.find('.l_reply_num', first=True).text
+        pcnt = int(pcnt[pcnt.find('共') + 1:-1])
+        posts = html.find('#j_p_postlist', first=True).find('.l_post')
+        for i in range(2, pcnt + 1):
+            posts += get('https://tieba.baidu.com/p/%s?pn=%d' % (self.tid, i)).find('#j_p_postlist', first=True).find('.l_post')
+        self.txts = []
+        lz = None
+        flag = True
+        for p in posts:
+            author = p.find('.d_name', first=True).text
+            text = p.find('.p_content', first=True).text
+            try:
+                date = p.find('.post-tail-wrap', first=True).text
+                date = date[date.find('楼') + 1:]
+            except:
+                date = ''
+            if lz is None:
+                lz = author
+            s = text + '\n'
+            # grabbing lzl
+            try:
+                pid = p.find('.d_post_content', first=True).attrs['id']
+            except:
+                continue
+            pid = pid[pid.rfind('_') + 1:]
+            pn = 1
+            while True:
+                l = get('https://tieba.baidu.com/p/comment?tid=%s&pid=%s&pn=%d' % (self.tid, pid, pn)).find('.lzl_cnt')
+                if not l:
+                    break
+                pn += 1
+                for x in l:
+                    s += x.find('.lzl_content_main', first=True).text + '    (%s  %s)\n' % (
+                        x.find('[username]', first=True).attrs['username'],
+                        x.find('.lzl_time', first=True).text )
+            s += author
+            if date:
+                s += ' ' + date
+            s += '\n'
+            if lz == author:
+                if flag:
+                    self.txts.append(s)
+                    flag = False
+                else:
+                    self.txts[-1] += s
+            else:
+                self.txts[-1] += s
+                flag = True
