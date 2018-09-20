@@ -50,51 +50,12 @@ def optimize_url(url):
     for x in ('/', '?', ':', '|', '\\', '<', '>'):
         url = url.replace(x, ' ')
     return ' '.join(url.split())
+def ask_with_y(s):
+    return input(s + ' (y)').lower() != 'n'
+def ask_with_n(s):
+    return input(s + ' (n)').lower() == 'y'
 def check_refused_overwrite(url):
-    return os.path.exists(url) and input('%s exists. Overwrite? (n) ' % url).lower() != 'y'
-
-def generate(src, split_mode='none', output_url=None, open_mode='w', if_optimize_url=True, if_attach_title=False, if_attach_source=False):
-    ''' if src is None:
-        ret = json.load(open('ret.json', 'r', encoding='utf-8'))
-    else:
-        json.dump(ret, open('ret.json', 'w', encoding='utf-8')) '''
-    print("Generating %s.." % src.title)
-    txts = [fix_nl(s) for s in src.txts]
-    s = ''
-    if if_attach_title:
-        s = '## %s\n' % src.title
-    if if_attach_source:
-        s += 'From %s #%s\n' % (src.site, src.tid)
-    if split_mode == 'none':
-        s += '\n'.join(txts) + '\n'
-    elif split_mode == 'spliter':
-        s += '\n$$$$$$$$$$$$\n\n'.join(txts) + '\n'
-    elif split_mode == 'first_line':
-        s += '\n'.join(['### ' + txt for txt in txts]) + '\n'
-    elif split_mode == 'number':
-        for i in range(len(txts)):
-            s += '### %d.\n' % (i + 1) + txts[i] + '\n'
-    else:
-        raise ValueError('Invalid split mode')
-    
-    if output_url is None:
-        output_url = '%s.txt' % src.title
-    if if_optimize_url:
-        output_url = optimize_url(output_url)
-    if open_mode.startswith('w') and check_refused_overwrite(output_url):
-        print('Aborting.')
-        return
-    with open(output_url, open_mode, encoding='utf-8') as f:
-        f.write(process_text(s))
-def generate_collection(srcs, output_url, split_mode, if_attach_source=True):
-    output_url = optimize_url(output_url)
-    if check_refused_overwrite(output_url):
-        print('Aborting.')
-        return
-    if os.path.exists(output_url):
-        os.remove(output_url)
-    for x in srcs:
-        generate(x, split_mode=split_mode, output_url=output_url, open_mode='a', if_optimize_url=False, if_attach_title=True, if_attach_source=if_attach_source)
+    return os.path.exists(url) and ask_with_n('%s exists. Overwrite?' % url)
 
 def read_cookies(url):
     '''
@@ -105,6 +66,9 @@ def read_cookies(url):
     for x in json.load(open(url, 'r', encoding='utf-8')):
         ret[x['name']] = x['value']
     return ret
+def check_cookies(cks):
+    if cks is None:
+        raise ValueError('cookies not loaded')
 def html_getter(cks):
     se = HTMLSession()
     return lambda url: se.get(url, cookies=cks).html
@@ -122,17 +86,99 @@ def verified_return(func):
 class BaseContent(object):
     '''
     Base novel content class.
+    tid; site; title; txts; success
     '''
-    def __init__(self, tid, title, txts):
-        self.tid = tid
-        self.title = title
-        self.txts = txts
-        self.site = None
+    tid = ''
+    title = ''
+    txts = []
+    success = False
+    site = ''
+
+    def __init__(self, tid):
+        self.tid = str(tid)
+        cache_url = 'cache/%s_%s.json' % (self.site, self.tid)
+        if os.path.exists(cache_url):
+            data = json.load(open(cache_url, 'r', encoding='utf-8'))
+            self.title = data['title']
+            self.txts = data['txts']
+            self.success = data['success'] if 'success' in data else True
+            print(self.site, self.title, self.tid)
+            print('Cache found.' if self.success else 'Failed cache found.')
+        else:
+            while not self.success:
+                try:
+                    self.fetch()
+                    self.success = True
+                except:
+                    if not ask_with_y('Failed. Retry?'):
+                        if not ask_with_n('Save failed cache?'):
+                            return
+                        break
+            json.dump(
+                {'title': self.title, 'txts': self.txts, 'site': self.site, 'tid': self.tid, 'success': self.success}, 
+                open(cache_url, 'w', encoding='utf-8'))
+
+def generate(src, split_mode='none', output_url=None, open_mode='w', if_optimize_url=True, if_attach_title=False, if_attach_source=False):
+    ''' if src is None:
+        ret = json.load(open('ret.json', 'r', encoding='utf-8'))
+    else:
+        json.dump(ret, open('ret.json', 'w', encoding='utf-8')) '''
+    print("Generating %s.." % src.title)
+    if not src.success:
+        print('Not success one.')
+        return
+    txts = [fix_nl(s) for s in src.txts]
+    s = ''
+    if if_attach_title:
+        s = '## %s\n' % src.title
+    if if_attach_source:
+        s += 'From %s #%s\n' % (src.site, src.tid)
+    if split_mode == 'none':
+        s += '\n'.join(txts) + '\n'
+    elif split_mode == 'spliter':
+        s += '\n$$$$$$$$$$$$\n\n'.join(txts) + '\n'
+    elif split_mode == 'first_line':
+        s += '\n'.join(['### ' + txt for txt in txts]) + '\n'
+    elif split_mode == 'number':
+        for i in range(len(txts)):
+            s += '### %d.\n' % (i + 1) + txts[i] + '\n'
+    else:
+        raise ValueError('invalid split mode')
+    
+    if output_url is None:
+        output_url = '%s.txt' % src.title
+    if if_optimize_url:
+        output_url = optimize_url(output_url)
+    if open_mode.startswith('w') and check_refused_overwrite(output_url):
+        print('Aborting.')
+        return
+    with open(output_url, open_mode, encoding='utf-8') as f:
+        f.write(process_text(s))
+
+def generate_collection(srcs, output_url, split_mode, if_attach_source=True):
+    output_url = optimize_url(output_url)
+    if check_refused_overwrite(output_url):
+        print('Aborting.')
+        return
+    if os.path.exists(output_url):
+        os.remove(output_url)
+    for x in srcs:
+        generate(x, split_mode=split_mode, output_url=output_url, open_mode='a', if_optimize_url=False, if_attach_title=True, if_attach_source=if_attach_source)
+
+yamibo_cookies = None
+tieba_cookies = None
+
+def load_yamibo_cookies(url):
+    global yamibo_cookies
+    yamibo_cookies = read_cookies(url)
+
+def load_tieba_cookies(url):
+    global tieba_cookies
+    tieba_cookies = read_cookies(url)
 
 class YamiboNew(BaseContent):
-    def __init__(self, nid):
-        self.site = 'Yamibo New'
-        self.tid = str(nid)
+    site = 'yamibo_new'
+    def fetch(self):
         se = HTMLSession()
         site = 'https://www.yamibo.com'
         page = se.get(site + '/novel/%s' % self.tid).html
@@ -140,10 +186,10 @@ class YamiboNew(BaseContent):
         self.txts = [se.get(site + c.find('a[href]')[0].attrs['href']).html.find('#txt')[0].find('.panel-body')[0].text for c in page.find('div[data-key]')]
 
 class Yamibo(BaseContent):
-    def __init__(self, tid):
-        self.site = 'Yamibo Forum'
-        self.tid = str(tid)
-        get = html_getter_2(read_cookies('yamibo-cookies.json'))
+    site = 'yamibo'
+    def fetch(self):
+        check_cookies(yamibo_cookies)
+        get = html_getter_2(yamibo_cookies)
         html = get('https://bbs.yamibo.com/thread-%s-1-1.html' % self.tid)
         self.title = html.find('h1.ts', first=True).text
         print('Yamibo, %s, %s' % (self.title, self.tid))
@@ -195,10 +241,10 @@ class Yamibo(BaseContent):
                 flag = True
 
 class Tieba(BaseContent):
-    def __init__(self, tid):
-        self.site = 'Tieba'
-        self.tid = str(tid)
-        get = html_getter(read_cookies('tieba-cookies.json'))
+    site = 'tieba'
+    def fetch(self):
+        check_cookies(tieba_cookies)
+        get = html_getter(tieba_cookies)
         html = get('https://tieba.baidu.com/p/%s' % self.tid)
         self.title = html.find('.core_title_txt', first=True).attrs['title']
         print('Tieba, %s, %s' % (self.title, self.tid))
