@@ -5,9 +5,6 @@ import requests
 from requests_html import HTMLSession, HTML
 
 def fix_nl(s):
-    '''
-    If s ends with \\n, return itself, or return it with an appending \\n.
-    '''
     return s if s.endswith('\n') else (s + '\n')
 def split_lines(s):
     s = fix_nl(s)
@@ -74,14 +71,8 @@ def html_getter(cks):
     return lambda url: se.get(url, cookies=cks).html
 def html_getter_2(cks):
     return lambda url: HTML(html=requests.get(url, cookies=cks).text)
-def verified_return(func):
-    def wrapper(**kwargs):
-        a = func(**kwargs)
-        b = func(**kwargs)
-        if a == b:
-            return a
-        return wrapper(**kwargs)
-    return wrapper
+def ffind(x, s):
+    return x.find(s, first=True)
 
 class BaseContent(object):
     '''
@@ -91,9 +82,10 @@ class BaseContent(object):
     tid = ''
     title = ''
     txts = []
-    success = False
     site = ''
 
+    def fetch(self):
+        raise RuntimeError('fetch without specific site')
     def __init__(self, tid):
         self.tid = str(tid)
         cache_url = 'cache/%s_%s.json' % (self.site, self.tid)
@@ -101,69 +93,53 @@ class BaseContent(object):
             data = json.load(open(cache_url, 'r', encoding='utf-8'))
             self.title = data['title']
             self.txts = data['txts']
-            self.success = data['success'] if 'success' in data else True
             print(self.site, self.title, self.tid)
-            print('Cache found.' if self.success else 'Failed cache found.')
+            print('Cache found.' if self.txts else 'Failed cache found.')
         else:
-            while not self.success:
+            while not self.txts:
                 try:
                     self.fetch()
-                    self.success = True
-                except:
-                    if not ask_with_y('Failed. Retry?'):
+                except Exception as e:
+                    if not ask_with_y('Failed: %s\nRetry?' % str(e)):
                         if not ask_with_n('Save failed cache?'):
                             return
+                        self.txts = []
                         break
             json.dump(
-                {'title': self.title, 'txts': self.txts, 'site': self.site, 'tid': self.tid, 'success': self.success}, 
+                {'title': self.title, 'txts': self.txts, 'site': self.site, 'tid': self.tid}, 
                 open(cache_url, 'w', encoding='utf-8'))
-
-def generate(src, split_mode='none', output_url=None, open_mode='w', if_optimize_url=True, if_attach_title=False, if_attach_source=False):
-    ''' if src is None:
-        ret = json.load(open('ret.json', 'r', encoding='utf-8'))
-    else:
-        json.dump(ret, open('ret.json', 'w', encoding='utf-8')) '''
-    print("Generating %s.." % src.title)
-    if not src.success:
-        print('Not success one.')
-        return
-    txts = [fix_nl(s) for s in src.txts]
-    s = ''
-    if if_attach_title:
-        s = '## %s\n' % src.title
-    if if_attach_source:
-        s += 'From %s #%s\n' % (src.site, src.tid)
-    if split_mode == 'none':
-        s += '\n'.join(txts) + '\n'
-    elif split_mode == 'spliter':
-        s += '\n$$$$$$$$$$$$\n\n'.join(txts) + '\n'
-    elif split_mode == 'first_line':
-        s += '\n'.join(['### ' + txt for txt in txts]) + '\n'
-    elif split_mode == 'number':
-        for i in range(len(txts)):
-            s += '### %d.\n' % (i + 1) + txts[i] + '\n'
-    else:
-        raise ValueError('invalid split mode')
-    
-    if output_url is None:
-        output_url = '%s.txt' % src.title
-    if if_optimize_url:
-        output_url = optimize_url(output_url)
-    if open_mode.startswith('w') and check_refused_overwrite(output_url):
-        print('Aborting.')
-        return
-    with open(output_url, open_mode, encoding='utf-8') as f:
-        f.write(process_text(s))
-
-def generate_collection(srcs, output_url, split_mode, if_attach_source=True):
-    output_url = optimize_url(output_url)
-    if check_refused_overwrite(output_url):
-        print('Aborting.')
-        return
-    if os.path.exists(output_url):
-        os.remove(output_url)
-    for x in srcs:
-        generate(x, split_mode=split_mode, output_url=output_url, open_mode='a', if_optimize_url=False, if_attach_title=True, if_attach_source=if_attach_source)
+    def generate(self, split_mode='none', output_url=None, open_mode='w', if_optimize_url=True, if_attach_title=False, if_attach_source=True):
+        print("Generating %s.." % self.title)
+        if not self.txts:
+            print('Invalid one.')
+            return
+        txts = [fix_nl(s) for s in self.txts]
+        s = ''
+        if if_attach_title:
+            s = '## %s\n' % self.title
+        if if_attach_source:
+            s += 'From %s #%s\n' % (self.site, self.tid)
+        if split_mode == 'none':
+            s += '\n'.join(txts) + '\n'
+        elif split_mode == 'spliter':
+            s += '\n$$$$$$$$$$$$\n\n'.join(txts) + '\n'
+        elif split_mode == 'first_line':
+            s += '\n'.join(['### ' + txt for txt in txts]) + '\n'
+        elif split_mode == 'number':
+            for i in range(len(txts)):
+                s += '### %d.\n' % (i + 1) + txts[i] + '\n'
+        else:
+            raise ValueError('invalid split mode')
+        
+        if output_url is None:
+            output_url = '%s.txt' % self.title
+        if if_optimize_url:
+            output_url = optimize_url(output_url)
+        if open_mode.startswith('w') and check_refused_overwrite(output_url):
+            print('Aborting.')
+            return
+        with open(output_url, open_mode, encoding='utf-8') as f:
+            f.write(process_text(s))
 
 yamibo_cookies = None
 tieba_cookies = None
@@ -175,6 +151,16 @@ def load_yamibo_cookies(url):
 def load_tieba_cookies(url):
     global tieba_cookies
     tieba_cookies = read_cookies(url)
+
+def generate_collection(srcs, output_url, split_mode, if_attach_source=True):
+    output_url = optimize_url(output_url)
+    if check_refused_overwrite(output_url):
+        print('Aborting.')
+        return
+    if os.path.exists(output_url):
+        os.remove(output_url)
+    for x in srcs:
+        x.generate(split_mode=split_mode, output_url=output_url, open_mode='a', if_optimize_url=False, if_attach_title=True, if_attach_source=if_attach_source)
 
 class YamiboNew(BaseContent):
     site = 'yamibo_new'
@@ -191,15 +177,15 @@ class Yamibo(BaseContent):
         check_cookies(yamibo_cookies)
         get = html_getter_2(yamibo_cookies)
         html = get('https://bbs.yamibo.com/thread-%s-1-1.html' % self.tid)
-        self.title = html.find('h1.ts', first=True).text
+        self.title = ffind(html, 'h1.ts').text
         print('Yamibo, %s, %s' % (self.title, self.tid))
         try:
-            pcnt = int(html.find('div.pg > label > span[title]', first=True).attrs['title'][1:-1])
+            pcnt = int(ffind(html, 'div.pg > label > span[title]').attrs['title'][1:-1])
         except:
             pcnt = 1
-        posts = list(filter(lambda x: x.attrs['id'][5:].isnumeric(), html.find('#postlist', first=True).find('div[id^=post]')))
+        posts = list(filter(lambda x: x.attrs['id'][5:].isnumeric(), ffind(html, '#postlist').find('div[id^=post]')))
         for i in range(2, pcnt + 1):
-            posts += list(filter(lambda x: x.attrs['id'][5:].isnumeric(), get('https://bbs.yamibo.com/thread-%s-%d-1.html' % (self.tid, i)).find('#postlist', first=True).find('div[id^=post]')))
+            posts += list(filter(lambda x: x.attrs['id'][5:].isnumeric(), ffind(get('https://bbs.yamibo.com/thread-%s-%d-1.html' % (self.tid, i)), '#postlist').find('div[id^=post]')))
             print('Page', i)
         self.txts = []
         lz = None
@@ -207,9 +193,9 @@ class Yamibo(BaseContent):
         for p in posts:
             div = p.find('.authi')
             author = div[0].text
-            date = div[1].find('em', first=True).text
+            date = ffind(div[1], 'em').text
             date = date[date.find(' ') + 1:]
-            div = p.find('.t_fsz', first=True)
+            div = ffind(p, '.t_fsz')
             text = div.text
             for x in div.find('.quote'):
                 t = ''
@@ -221,7 +207,7 @@ class Yamibo(BaseContent):
                 lz = author
             s = text + '\n'
             try:
-                rat = p.find('.ratl', first=True).find('tr')
+                rat = ffind(p, '.ratl').find('tr')
                 del rat[0]
                 for x in rat:
                     l = [y.text for y in x.find('td')]
@@ -246,21 +232,21 @@ class Tieba(BaseContent):
         check_cookies(tieba_cookies)
         get = html_getter(tieba_cookies)
         html = get('https://tieba.baidu.com/p/%s' % self.tid)
-        self.title = html.find('.core_title_txt', first=True).attrs['title']
+        self.title = ffind(html, '.core_title_txt').attrs['title']
         print('Tieba, %s, %s' % (self.title, self.tid))
-        pcnt = html.find('.l_reply_num', first=True).text
+        pcnt = ffind(html, '.l_reply_num').text
         pcnt = int(pcnt[pcnt.find('共') + 1:-1])
-        posts = html.find('#j_p_postlist', first=True).find('.l_post')
+        posts = ffind(html, '#j_p_postlist').find('.l_post')
         for i in range(2, pcnt + 1):
-            posts += get('https://tieba.baidu.com/p/%s?pn=%d' % (self.tid, i)).find('#j_p_postlist', first=True).find('.l_post')
+            posts += ffind(ffind(get('https://tieba.baidu.com/p/%s?pn=%d' % (self.tid, i)), '#j_p_postlist'), '.l_post')
         self.txts = []
         lz = None
         flag = True
         for p in posts:
-            author = p.find('.d_name', first=True).text
-            text = p.find('.p_content', first=True).text
+            author = ffind(p, '.d_name').text
+            text = ffind(p, '.p_content').text
             try:
-                date = p.find('.post-tail-wrap', first=True).text
+                date = ffind(p, '.post-tail-wrap').text
                 date = date[date.find('楼') + 1:]
             except:
                 date = ''
@@ -269,7 +255,7 @@ class Tieba(BaseContent):
             s = text + '\n'
             # grabbing lzl
             try:
-                pid = p.find('.d_post_content', first=True).attrs['id']
+                pid = ffind(p, '.d_post_content').attrs['id']
             except:
                 continue
             pid = pid[pid.rfind('_') + 1:]
@@ -280,9 +266,9 @@ class Tieba(BaseContent):
                     break
                 pn += 1
                 for x in l:
-                    s += x.find('.lzl_content_main', first=True).text + '    (%s  %s)\n' % (
-                        x.find('[username]', first=True).attrs['username'],
-                        x.find('.lzl_time', first=True).text )
+                    s += ffind(x, '.lzl_content_main').text + '    (%s  %s)\n' % (
+                        ffind(x, '[username]').attrs['username'],
+                        ffind(x, '.lzl_time').text )
             s += author
             if date:
                 s += ' ' + date
