@@ -2,7 +2,10 @@ import os
 import json
 import zhconv
 import requests
+import time
 from requests_html import HTMLSession, HTML
+
+cookies = dict()
 
 def fix_nl(s):
     return s if s.endswith('\n') else (s + '\n')
@@ -52,7 +55,7 @@ def ask_with_y(s):
 def ask_with_n(s):
     return input(s + ' (n)').lower() == 'y'
 def check_refused_overwrite(url):
-    return os.path.exists(url) and ask_with_n('%s exists. Overwrite?' % url)
+    return os.path.exists(url) and not ask_with_n('%s exists. Overwrite?' % url)
 
 def read_cookies(url):
     '''
@@ -63,9 +66,6 @@ def read_cookies(url):
     for x in json.load(open(url, 'r', encoding='utf-8')):
         ret[x['name']] = x['value']
     return ret
-def check_cookies(cks):
-    if cks is None:
-        raise ValueError('cookies not loaded')
 def html_getter(cks):
     se = HTMLSession()
     return lambda url: se.get(url, cookies=cks).html
@@ -74,10 +74,26 @@ def html_getter_2(cks):
 def ffind(x, s):
     return x.find(s, first=True)
 
+class MaxTryLimitExceed(Exception):
+    pass
+def keep_trying(max_depth=5, catchee=BaseException):
+    def decorater(func):
+        def wrapper(args, kwargs, depth):
+            if depth >= max_depth: raise MaxTryLimitExceed
+            try:
+                return func(*args, **kwargs)
+            except catchee as e:
+                print(f'In depth {depth}: {type(e).__name__}: {e}')
+                return wrapper(args, kwargs, depth + 1)
+        def handler(*args, **kwargs):
+            return wrapper(args, kwargs, 0)
+        return handler
+    return decorater
+
 class BaseContent(object):
     '''
     Base novel content class.
-    tid; site; title; txts; success
+    tid; site; title; txts
     '''
     tid = ''
     title = ''
@@ -98,9 +114,9 @@ class BaseContent(object):
         else:
             while not self.txts:
                 try:
-                    self.fetch()
-                except Exception as e:
-                    if not ask_with_y('Failed: %s\nRetry?' % str(e)):
+                    keep_trying()(self.fetch)()
+                except MaxTryLimitExceed:
+                    if not ask_with_y('Failed, retry?'):
                         if not ask_with_n('Save failed cache?'):
                             return
                         self.txts = []
@@ -141,24 +157,16 @@ class BaseContent(object):
         with open(output_url, open_mode, encoding='utf-8') as f:
             f.write(process_text(s))
 
-yamibo_cookies = None
-tieba_cookies = None
-
-def load_yamibo_cookies(url):
-    global yamibo_cookies
-    yamibo_cookies = read_cookies(url)
-
-def load_tieba_cookies(url):
-    global tieba_cookies
-    tieba_cookies = read_cookies(url)
+def load_cookies(url, site):
+    cookies[site] = read_cookies(url)
 
 def generate_collection(srcs, output_url, split_mode, if_attach_source=True):
     output_url = optimize_url(output_url)
     if check_refused_overwrite(output_url):
         print('Aborting.')
         return
-    if os.path.exists(output_url):
-        os.remove(output_url)
+    with open(output_url, 'w', encoding='utf-8') as fp:
+        fp.write(f'Generated at {time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())}\n')
     for x in srcs:
         x.generate(split_mode=split_mode, output_url=output_url, open_mode='a', if_optimize_url=False, if_attach_title=True, if_attach_source=if_attach_source)
 
@@ -173,19 +181,20 @@ class YamiboNew(BaseContent):
 
 class Yamibo(BaseContent):
     site = 'yamibo'
+    formatter_tid = 'https://bbs.yamibo.com/thread-%s-1-1.html'
+    formatter_tid_page = 'https://bbs.yamibo.com/thread-%s-%d-1.html'
     def fetch(self):
-        check_cookies(yamibo_cookies)
-        get = html_getter_2(yamibo_cookies)
-        html = get('https://bbs.yamibo.com/thread-%s-1-1.html' % self.tid)
+        get = html_getter_2(cookies[self.site])
+        html = get(self.formatter_tid % self.tid)
         self.title = ffind(html, 'h1.ts').text
-        print('Yamibo, %s, %s' % (self.title, self.tid))
+        print(f'{self.site}, {self.title}, {self.tid}')
         try:
             pcnt = int(ffind(html, 'div.pg > label > span[title]').attrs['title'][1:-1])
         except:
             pcnt = 1
         posts = list(filter(lambda x: x.attrs['id'][5:].isnumeric(), ffind(html, '#postlist').find('div[id^=post]')))
         for i in range(2, pcnt + 1):
-            posts += list(filter(lambda x: x.attrs['id'][5:].isnumeric(), ffind(get('https://bbs.yamibo.com/thread-%s-%d-1.html' % (self.tid, i)), '#postlist').find('div[id^=post]')))
+            posts += list(filter(lambda x: x.attrs['id'][5:].isnumeric(), ffind(get(self.formatter_tid_page % (self.tid, i)), '#postlist').find('div[id^=post]')))
             print('Page', i)
         self.txts = []
         lz = None
@@ -226,11 +235,15 @@ class Yamibo(BaseContent):
                 self.txts[-1] += s
                 flag = True
 
+class Nyasama(Yamibo):
+    site = 'nyasama'
+    formatter_tid = 'http://bbs.nyasama.com/forum.php?mod=viewthread&tid=%s'
+    formatter_tid_page = 'http://bbs.nyasama.com/forum.php?mod=viewthread&tid=%s&page=%d'
+
 class Tieba(BaseContent):
     site = 'tieba'
     def fetch(self):
-        check_cookies(tieba_cookies)
-        get = html_getter(tieba_cookies)
+        get = html_getter(cookies[self.site])
         html = get('https://tieba.baidu.com/p/%s' % self.tid)
         self.title = ffind(html, '.core_title_txt').attrs['title']
         print('Tieba, %s, %s' % (self.title, self.tid))

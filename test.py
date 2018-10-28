@@ -1,9 +1,6 @@
 from nvg import *
 
-load_tieba_cookies('tieba-cookies.json')
-load_yamibo_cookies('yamibo-cookies.json')
+for x in ['tieba', 'yamibo', 'nyasama']:
+    load_cookies(f'{x}-cookies.json', x)
 
-generate_collection([Yamibo(x) for x in (
-    87560,
-    159379,
-    )], 'test.txt', 'number')
+generate_collection([Nyasama(x) for x in [49451, 30279]], 'test.txt', 'number')
