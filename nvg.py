@@ -135,17 +135,20 @@ class BaseContent(object):
             s = '## %s\n' % self.title
         if if_attach_source:
             s += 'From %s #%s\n' % (self.site, self.tid)
-        if split_mode == 'none':
-            s += '\n'.join(txts) + '\n'
-        elif split_mode == 'spliter':
-            s += '\n$$$$$$$$$$$$\n\n'.join(txts) + '\n'
-        elif split_mode == 'first_line':
-            s += '\n'.join(['### ' + txt for txt in txts]) + '\n'
-        elif split_mode == 'number':
-            for i in range(len(txts)):
-                s += '### %d.\n' % (i + 1) + txts[i] + '\n'
+        if len(txts) > 1:
+            if split_mode == 'none':
+                s += '\n'.join(txts) + '\n'
+            elif split_mode == 'spliter':
+                s += '\n$$$$$$$$$$$$\n\n'.join(txts) + '\n'
+            elif split_mode == 'first_line':
+                s += '\n'.join(['### ' + txt for txt in txts]) + '\n'
+            elif split_mode == 'number':
+                for i in range(len(txts)):
+                    s += '### %d.\n' % (i + 1) + txts[i] + '\n'
+            else:
+                raise ValueError('invalid split mode')
         else:
-            raise ValueError('invalid split mode')
+            s += '\n' + txts[0] + '\n'
         
         if output_url is None:
             output_url = '%s.txt' % self.title
