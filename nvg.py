@@ -1,12 +1,8 @@
 import os, json, time
 import zhconv
 import requests
-import lxml.html as lh
-from lxml.html.clean import clean_html
 from html2text import HTML2Text
 from requests_html import HTMLSession, HTML
-from bs4 import BeautifulSoup as bs
-from inscriptis import get_text
 
 cookies = dict()
 cache_path = 'cache'
@@ -166,6 +162,7 @@ class BaseContent(object):
             print(self.site, self.title, self.tid)
             print('Cache found.' if self.txts else 'Failed cache found.')
         else:
+            print(self.site, self.tid)
             while not self.txts:
                 try:
                     keep_trying()(self.fetch)()
@@ -247,7 +244,7 @@ class Yamibo(BaseContent):
         get = html_getter(cookies[self.site])
         html = get(self.formatter_tid % self.tid)
         self.title = html.finds('h1.ts').text
-        print(f'{self.site}, {self.title}, {self.tid}')
+        print(f'{self.title}')
         try:
             pcnt = int(html.finds('div.pg > label > span[title]').attrs['title'][1:-1])
         except:
