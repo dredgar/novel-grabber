@@ -1,9 +1,10 @@
-import os, json, time
+import os, json, time, traceback
 import zhconv
 import requests
 from html2text import HTML2Text
 from requests_html import HTMLSession, HTML
 
+ver = 11216
 cookies = dict()
 cache_path = 'cache'
 if not os.path.exists(cache_path):
@@ -11,52 +12,11 @@ if not os.path.exists(cache_path):
 
 def fix_nl(s):
     return s if s.endswith('\n') else (s + '\n')
-def split_lines(s):
-    s = fix_nl(s)
-    lines = []
-    t = []
-    for c in s:
-        t.append(c)
-        if c == '\n':
-            lines.append(''.join(t))
-            t.clear()
-    return lines
-'''
-def process_text(s):
-    s = zhconv.convert(fix_nl(s), 'zh-cn')
-    lines = []
-    t = split_lines(s)
-    for r in t:
-        if r == '\n':
-            continue
-        lines.append(r)
-    t = [r for r in lines]
-    lines = []
-    ncnt = 0
-    for line in t:
-        if line == '\n':
-            ncnt += 1
-        else:
-            lines.append(line)
-            if ncnt > 1:
-                lines.append('\n')
-            ncnt = 0
-    if ncnt > 1:
-        lines.append('\n')
-    # ncnt = 0
-    return fix_nl(''.join(lines))
-'''
 def process_text(s):
     s = zhconv.convert(fix_nl(s), 'zh-cn')
     lines = (line.strip() for line in s.splitlines())
-    # break multi-headlines into a line each
-    # chunks = (phrase.strip() for line in lines for phrase in line.split('  '))
-    # drop blank lines
     return '\n'.join(line for line in lines if line) + '\n'
 def optimize_url(url):
-    '''
-    Convert a url to make it supported by Windows filesystem.
-    '''
     url = url.replace('*', '')
     for x in ('/', '?', ':', '|', '\\', '<', '>'):
         url = url.replace(x, ' ')
@@ -68,37 +28,6 @@ def ask_with_n(s):
 def check_refused_overwrite(url):
     return os.path.exists(url) and not ask_with_n('%s exists. Overwrite?' % url)
 
-def read_cookies(url):
-    '''
-    Read cookies formatted for requests module from a file that EditThisCookie extension exports to.
-    :param url: Path to the file EditThisCookie exported to.
-    '''
-    ret = dict()
-    for x in json.load(open(url, 'r', encoding='utf-8')):
-        ret[x['name']] = x['value']
-    return ret
-'''
-def html_getter_2(cks):
-    se = HTMLSession()
-    return lambda url: se.get(url, cookies=cks).html
-'''
-
-class MaxTryLimitExceed(Exception):
-    pass
-def keep_trying(max_depth=5, catchee=BaseException):
-    def decorater(func):
-        def wrapper(args, kwargs, depth):
-            if depth >= max_depth: raise MaxTryLimitExceed
-            try:
-                return func(*args, **kwargs)
-            except catchee as e:
-                print(f'In depth {depth}: {type(e).__name__}: {e}')
-                return wrapper(args, kwargs, depth + 1)
-        def handler(*args, **kwargs):
-            return wrapper(args, kwargs, 0)
-        return handler
-    return decorater
-
 class HTT(object):
     def __init__(self):
         self.h2t = HTML2Text()
@@ -109,23 +38,14 @@ class HTT(object):
         if ret.strip().endswith('---'):
             ret = ret[:ret.rfind('---')]
         return ret
+
 htt = HTT()
 
 class Elem(object):
     def __init__(self, elem):
         self.data = elem
-        '''
-        if not self._text:
-            self._text = htt(self.data.html) #.strip()
-            # self._text = ''.join(bs(self.data.html, "html.parser").stripped_strings)
-        return self._text
-        '''
-    @property
-    def attrs(self):
-        return self.data.attrs
-    @property
-    def text(self):
-        return self.data.text
+        self.attrs = elem.attrs
+        self.text = elem.text
     @property
     def ptext(self):
         return htt(self.data.html)
@@ -139,20 +59,42 @@ class Elem(object):
 def html_getter(cks):
     return lambda url: Elem(HTML(html=requests.get(url, cookies=cks).text).find('html', first=True))
 
+def read_cookies(url): # with EditThisCookie exporting
+    ret = dict()
+    for x in json.load(open(url, 'r', encoding='utf-8')):
+        ret[x['name']] = x['value']
+    return ret
+
 class BaseContent(object):
-    '''
-    Base novel content class.
-    '''
-    tid = ''
-    title = ''
+    tid = title = site = author = None
     txts = []
-    site = ''
-    author = ''
 
     def fetch(self):
-        raise RuntimeError('fetch without specific site')
+        raise TypeError
+
+    flag = True # whether the last guy is not the author.
+    def push_post(self, text, author):
+        if author == self.author:
+            if self.flag:
+                self.txts.append(text)
+                self.flag = False
+            else:
+                self.txts[-1] += text
+        else:
+            self.txts[-1] += text
+            self.flag = True
+
     def __init__(self, tid):
         self.tid = str(tid)
+        if self.site not in cookies:
+            cookie_path = self.site + '-cookies.json'
+            if os.path.exists(cookie_path):
+                load_cookies(cookie_path, self.site)
+        if self.site in cookies:
+            self.get = html_getter(cookies[self.site])
+        else:
+            print('Warning: cannot load cookies for', self.site)
+            self.get = html_getter({})
         cache_url = cache_path + '/%s_%s.json' % (self.site, self.tid)
         if os.path.exists(cache_url):
             data = json.load(open(cache_url, 'r', encoding='utf-8'))
@@ -163,15 +105,12 @@ class BaseContent(object):
             print('Cache found.' if self.txts else 'Failed cache found.')
         else:
             print(self.site, self.tid)
-            while not self.txts:
-                try:
-                    keep_trying()(self.fetch)()
-                except MaxTryLimitExceed:
-                    if not ask_with_y('Failed, retry?'):
-                        if not ask_with_n('Save failed cache?'):
-                            return
-                        self.txts = []
-                        break
+            try:
+                self.fetch()
+            except Exception:
+                self.txts = []
+                traceback.print_exc()
+                print('Failed.')
             json.dump(
                 {'title': self.title, 'txts': self.txts, 'site': self.site, 'tid': self.tid, 'author': self.author}, 
                 open(cache_url, 'w', encoding='utf-8'))
@@ -203,7 +142,7 @@ class BaseContent(object):
             s += '\n' + txts[0] + '\n'
         
         if output_url is None:
-            output_url = '%s.txt' % self.title
+            output_url = self.title + '.md'
         if if_optimize_url:
             output_url = optimize_url(output_url)
         if open_mode.startswith('w') and check_refused_overwrite(output_url):
@@ -221,28 +160,16 @@ def generate_collection(srcs, output_url, split_mode):
         print('Aborting.')
         return
     with open(output_url, 'w', encoding='utf-8') as fp:
-        fp.write(f'Generated at {time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())}\n')
+        fp.write(f'Generated by pvg build {ver} of {len(srcs)} posts at {time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())}\n')
     for x in srcs:
         x.generate(split_mode=split_mode, output_url=output_url, open_mode='a', if_optimize_url=False, if_attach_title=True)
-
-'''
-class YamiboNew(BaseContent):
-    site = 'yamibo_new'
-    def fetch(self):
-        se = HTMLSession()
-        url = 'https://www.yamibo.com'
-        page = se.get(url + '/novel/%s' % self.tid).html
-        self.title = htt(ffind(page, 'h3.col-md-12'))
-        self.txts = [se.get(url + htt(c.find('a[href]', first=True).attrs['href'].html.find('#txt', first=True).find('.panel-body', first=True)) for c in page.find('div[data-key]')]
-'''
 
 class Yamibo(BaseContent):
     site = 'yamibo'
     formatter_tid = 'https://bbs.yamibo.com/thread-%s-1-1.html'
     formatter_tid_page = 'https://bbs.yamibo.com/thread-%s-%d-1.html'
     def fetch(self):
-        get = html_getter(cookies[self.site])
-        html = get(self.formatter_tid % self.tid)
+        html = self.get(self.formatter_tid % self.tid)
         self.title = html.finds('h1.ts').text
         print(f'{self.title}')
         try:
@@ -255,12 +182,8 @@ class Yamibo(BaseContent):
 
         posts = parse(html)
         for i in range(2, pcnt + 1):
-            posts += parse(get(self.formatter_tid_page % (self.tid, i)))
+            posts += parse(self.get(self.formatter_tid_page % (self.tid, i)))
             print('Page', i)
-
-        self.txts = []
-        lz = None
-        flag = True
 
         for p in posts:
             div = p.find('.authi')
@@ -269,14 +192,11 @@ class Yamibo(BaseContent):
             date = date[date.find(' ') + 1:]
             div = p.finds('.t_fsz')
             text = div.ptext
-            for x in div.find('.quote'):
-                t = ''
-                for line in split_lines(x.text):
-                    if line.strip():
-                        t += '> ' + line
-                text = text.replace(x.text, t)
-            if lz is None:
-                lz = author
+            for quot in div.find('.quote'):
+                text = text.replace(quot.text,
+                    ''.join([f'> {line}\n' for line in quot.text.splitlines() if line.strip()]) )
+            if not self.author:
+                self.author = author
             s = text + '\n'
             try:
                 rat = p.finds('.ratl').find('tr')
@@ -288,16 +208,7 @@ class Yamibo(BaseContent):
             except:
                 pass
             s += author + ' ' + date + '\n---\n'
-            if lz == author:
-                if flag:
-                    self.txts.append(s)
-                    flag = False
-                else:
-                    self.txts[-1] += s
-            else:
-                self.txts[-1] += s
-                flag = True
-        self.author = lz
+            self.push_post(s, author)
 
 class Nyasama(Yamibo):
     site = 'nyasama'
@@ -307,18 +218,15 @@ class Nyasama(Yamibo):
 class Tieba(BaseContent):
     site = 'tieba'
     def fetch(self):
-        get = html_getter(cookies[self.site])
-        html = get('https://tieba.baidu.com/p/%s' % self.tid)
+        html = self.get('https://tieba.baidu.com/p/%s' % self.tid)
         self.title = html.finds('.core_title_txt').attrs['title']
         print('Tieba, %s, %s' % (self.title, self.tid))
         pcnt = html.findt('.l_reply_num')
         pcnt = int(pcnt[pcnt.find('共') + 1:-1])
         posts = html.finds('#j_p_postlist').find('.l_post')
         for i in range(2, pcnt + 1):
-            posts += get('https://tieba.baidu.com/p/%s?pn=%d' % (self.tid, i)).finds('#j_p_postlist').finds('.l_post')
-        self.txts = []
-        lz = None
-        flag = True
+            posts += self.get('https://tieba.baidu.com/p/%s?pn=%d' % (self.tid, i)).finds('#j_p_postlist').finds('.l_post')
+
         for p in posts:
             author = p.findt('.d_name')
             text = p.findt('.p_content')
@@ -327,8 +235,8 @@ class Tieba(BaseContent):
                 date = date[date.find('楼') + 1:]
             except:
                 date = ''
-            if lz is None:
-                lz = author
+            if not self.author:
+                self.author = author
             s = text + '\n'
             # grabbing lzl
             try:
@@ -338,7 +246,7 @@ class Tieba(BaseContent):
             pid = pid[pid.rfind('_') + 1:]
             pn = 1
             while True:
-                l = get('https://tieba.baidu.com/p/comment?tid=%s&pid=%s&pn=%d' % (self.tid, pid, pn)).find('.lzl_cnt')
+                l = self.get('https://tieba.baidu.com/p/comment?tid=%s&pid=%s&pn=%d' % (self.tid, pid, pn)).find('.lzl_cnt')
                 if not l:
                     break
                 pn += 1
@@ -346,20 +254,8 @@ class Tieba(BaseContent):
                     s += x.findt('.lzl_content_main') + '    (%s  %s)\n' % (
                         x.finds('[username]').attrs['username'],
                         x.findt(x, '.lzl_time') )
-            s += author
-            if date:
-                s += ' ' + date
-            s += '\n---\n'
-            if lz == author:
-                if flag:
-                    self.txts.append(s)
-                    flag = False
-                else:
-                    self.txts[-1] += s
-            else:
-                self.txts[-1] += s
-                flag = True
-        self.author = lz
+            s += author + ((' ' + date) if date else '') + '\n---\n'
+            self.push_post(s, author)
 
 if __name__ == '__main__':
     from getpass import getuser
@@ -367,5 +263,7 @@ if __name__ == '__main__':
         for x in ['tieba', 'yamibo', 'nyasama']:
             load_cookies(f'{x}-cookies.json', x)
 
+        '''
         get = html_getter(cookies['yamibo'])
         html = get(r'https://bbs.yamibo.com/thread-214724-1-1.html')
+        '''
