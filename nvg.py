@@ -4,11 +4,8 @@ import requests
 from html2text import HTML2Text
 from requests_html import HTMLSession, HTML
 
-ver = 11216
 cookies = dict()
 cache_path = 'cache'
-if not os.path.exists(cache_path):
-    os.makedirs(cache_path)
 
 def fix_nl(s):
     return s if s.endswith('\n') else (s + '\n')
@@ -56,8 +53,11 @@ class Elem(object):
     def findt(self, word):
         return self.finds(word).text
 
+headers = {
+    'user-agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.108 Safari/537.36'
+}
 def html_getter(cks):
-    return lambda url: Elem(HTML(html=requests.get(url, cookies=cks).text).find('html', first=True))
+    return lambda url: Elem(HTML(html=requests.get(url, cookies=cks, headers=headers).text).find('html', first=True))
 
 def read_cookies(url): # with EditThisCookie exporting
     ret = dict()
@@ -66,13 +66,9 @@ def read_cookies(url): # with EditThisCookie exporting
     return ret
 
 class BaseContent(object):
-    tid = title = site = author = None
-    txts = []
-
     def fetch(self):
         raise TypeError
 
-    flag = True # whether the last guy is not the author.
     def push_post(self, text, author):
         if author == self.author:
             if self.flag:
@@ -85,17 +81,19 @@ class BaseContent(object):
             self.flag = True
 
     def __init__(self, tid):
+        self.title = self.author = ''
         self.tid = str(tid)
         if self.site not in cookies:
             cookie_path = self.site + '-cookies.json'
             if os.path.exists(cookie_path):
                 load_cookies(cookie_path, self.site)
+                print(f'Using cookies for {self.site} from {cookie_path}')
         if self.site in cookies:
             self.get = html_getter(cookies[self.site])
         else:
-            print('Warning: cannot load cookies for', self.site)
+            print('Warning: no loaded cookies for', self.site)
             self.get = html_getter({})
-        cache_url = cache_path + '/%s_%s.json' % (self.site, self.tid)
+        cache_url = f'{cache_path}/%s_%s.json' % (self.site, self.tid)
         if os.path.exists(cache_url):
             data = json.load(open(cache_url, 'r', encoding='utf-8'))
             self.title = data['title']
@@ -106,11 +104,14 @@ class BaseContent(object):
         else:
             print(self.site, self.tid)
             try:
-                self.fetch()
-            except Exception:
                 self.txts = []
-                traceback.print_exc()
-                print('Failed.')
+                self.flag = True # whether the last guy is not the author.
+                self.fetch()
+            except Exception as e:
+                self.txts = []
+                print('Failed', e)
+            if not os.path.exists(cache_path):
+                os.makedirs(cache_path)
             json.dump(
                 {'title': self.title, 'txts': self.txts, 'site': self.site, 'tid': self.tid, 'author': self.author}, 
                 open(cache_url, 'w', encoding='utf-8'))
@@ -121,7 +122,6 @@ class BaseContent(object):
             return
         txts = [fix_nl(s) for s in self.txts]
         s = ''
-
         if title_level:
             s = '#' * title_level + self.title + '\n'
         s += f'_From {self.site} {self.tid}_\n'
@@ -178,8 +178,7 @@ class Yamibo(BaseContent):
         except:
             pcnt = 1
 
-        def parse(doc):
-            return list(filter(lambda x: x.attrs['id'][5:].isnumeric(), doc.finds('#postlist').find('div[id^=post]')))
+        parse = lambda doc: list(filter(lambda x: x.attrs['id'][5:].isnumeric(), doc.finds('#postlist').find('div[id^=post]')))
 
         posts = parse(html)
         for i in range(2, pcnt + 1):
@@ -258,13 +257,13 @@ class Tieba(BaseContent):
             s += author + ((' ' + date) if date else '') + '\n---\n'
             self.push_post(s, author)
 
+'''
 if __name__ == '__main__':
     from getpass import getuser
     if getuser() == 'karin0':
         for x in ['tieba', 'yamibo', 'nyasama']:
             load_cookies(f'{x}-cookies.json', x)
 
-        '''
         get = html_getter(cookies['yamibo'])
         html = get(r'https://bbs.yamibo.com/thread-214724-1-1.html')
-        '''
+'''

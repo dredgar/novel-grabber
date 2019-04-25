@@ -1,3 +1,3 @@
 from nvg import *
 
-Yamibo(158054).generate()
+Yamibo(257167).generate()
