@@ -123,7 +123,7 @@ class BaseContent(object):
         txts = [fix_nl(s) for s in self.txts]
         s = ''
         if title_level:
-            s = '#' * title_level + self.title + '\n'
+            s = '#' * title_level + ' ' + self.title + '\n'
         s += f'_From {self.site} {self.tid}_\n'
         if self.author:
             s += f'_By {self.author}_\n'
